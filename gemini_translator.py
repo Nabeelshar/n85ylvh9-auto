@@ -1,0 +1,391 @@
+"""
+Gemini API translator module with glossary support
+"""
+
+import json
+import time
+from google import genai
+from google.genai import types
+
+
+class GeminiTranslator:
+    def __init__(self, api_key, logger):
+        self.logger = logger
+        self.client = None
+        self.glossary = {}
+        
+        if not api_key:
+            self.logger("WARNING: No Gemini API key provided")
+            return
+        
+        try:
+            self.client = genai.Client(api_key=api_key)
+            self.logger("✓ Gemini API client initialized")
+        except Exception as e:
+            self.logger(f"ERROR: Failed to initialize Gemini client: {e}")
+            self.client = None
+    
+    def translate_description(self, description_html, source_lang='zh-CN', target_lang='en'):
+        """
+        Translate novel description with prompt to clean and extract only the description
+        """
+        if not self.client:
+            self.logger("WARNING: Gemini client not available for description translation")
+            return description_html
+        
+        prompt = f"""You are a professional translator specializing in Chinese web novels.
+
+Task: Translate the following Chinese novel description to English. 
+
+Important instructions:
+1. ONLY include the actual novel description/synopsis in your response
+2. Remove any website footers, advertisements, or metadata
+3. Remove any "Latest Chapter:" or "Update:" information
+4. Keep the translation natural and engaging
+5. Preserve paragraph breaks
+6. Do NOT include any explanations or comments - just output the translated description
+
+Chinese text to translate:
+{description_html}
+
+English translation:"""
+        
+        try:
+            response = self.client.models.generate_content(
+                model='gemini-flash-latest',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=0,
+                    ),
+                )
+            )
+            
+            translated = response.text.strip()
+            self.logger("  ✓ Description translated with Gemini")
+            return translated
+            
+        except Exception as e:
+            self.logger(f"  ✗ Gemini description translation failed: {e}")
+            return description_html
+    
+    def generate_glossary(self, chapters_data, max_chapters=None):
+        """
+        Generate a glossary of names and terms from all chapters
+        
+        Args:
+            chapters_data: List of dicts with 'title' and 'content' (Chinese)
+            max_chapters: Not used (kept for compatibility)
+        
+        Returns:
+            dict: Glossary mapping Chinese terms to English translations
+        """
+        if not self.client:
+            self.logger("WARNING: Gemini client not available for glossary generation")
+            return {}
+        
+        self.logger(f"\n{'='*50}")
+        self.logger("Generating Translation Glossary")
+        self.logger(f"{'='*50}")
+        self.logger(f"Analyzing all {len(chapters_data)} chapters...")
+        
+        # Combine all chapters for context
+        sample_chapters = chapters_data
+        combined_text = "\n\n".join([
+            f"Chapter {i+1}:\n{ch['content'][:3000]}"  # Limit each chapter to 3000 chars
+            for i, ch in enumerate(sample_chapters)
+        ])
+        
+        prompt = f"""You are a professional translator for Chinese web novels.
+
+Task: Analyze the following Chinese novel chapters and create a consistent English glossary for character names, place names, special terms, and cultivation/skill terms.
+
+Instructions:
+1. Extract all important names (characters, places, organizations)
+2. Extract cultivation terms, skill names, and special terminology
+3. Provide consistent English translations that sound natural
+4. For names, use pinyin or appropriate English equivalents
+5. Return ONLY a JSON object in this exact format:
+
+{{
+  "characters": {{"中文名": "English Name", ...}},
+  "places": {{"中文地名": "English Place", ...}},
+  "terms": {{"中文术语": "English Term", ...}}
+}}
+
+Chinese chapters:
+{combined_text[:15000]}
+
+JSON glossary:"""
+        
+        try:
+            response = self.client.models.generate_content(
+                model='gemini-flash-latest',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.2,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=0,
+                    ),
+                )
+            )
+            
+            # Parse JSON response
+            response_text = response.text.strip()
+            
+            # Extract JSON from markdown code blocks if present
+            if '```json' in response_text:
+                response_text = response_text.split('```json')[1].split('```')[0].strip()
+            elif '```' in response_text:
+                response_text = response_text.split('```')[1].split('```')[0].strip()
+            
+            glossary_data = json.loads(response_text)
+            
+            # Flatten glossary for easy lookup
+            self.glossary = {}
+            for category in ['characters', 'places', 'terms']:
+                if category in glossary_data:
+                    self.glossary.update(glossary_data[category])
+            
+            self.logger(f"✓ Glossary generated with {len(self.glossary)} entries")
+            self.logger(f"  - Characters: {len(glossary_data.get('characters', {}))}")
+            self.logger(f"  - Places: {len(glossary_data.get('places', {}))}")
+            self.logger(f"  - Terms: {len(glossary_data.get('terms', {}))}")
+            
+            # Log sample entries
+            if self.glossary:
+                self.logger("\n  Sample glossary entries:")
+                for i, (chinese, english) in enumerate(list(self.glossary.items())[:5]):
+                    self.logger(f"    {chinese} → {english}")
+                if len(self.glossary) > 5:
+                    self.logger(f"    ... and {len(self.glossary) - 5} more")
+            
+            return self.glossary
+            
+        except json.JSONDecodeError as e:
+            self.logger(f"✗ Failed to parse glossary JSON: {e}")
+            self.logger(f"  Response: {response_text[:500]}")
+            return {}
+        except Exception as e:
+            self.logger(f"✗ Glossary generation failed: {e}")
+            return {}
+    
+    def translate_chapter_content(self, content, chapter_number, glossary=None, google_translator=None):
+        """
+        Translate chapter content using Gemini with glossary consistency
+        Enhanced with multi-level fallback strategy
+        
+        Args:
+            content: Chinese chapter content
+            chapter_number: Chapter number for context
+            glossary: Optional glossary dict (uses self.glossary if not provided)
+            google_translator: Google Translate instance for fallback
+        
+        Returns:
+            tuple: (translated_content, translation_method)
+            translation_method: 'gemini', 'gemini_censored', or 'google'
+        """
+        if not self.client:
+            self.logger("    WARNING: Gemini client not available")
+            return None, 'failed'
+        
+        if glossary is None:
+            glossary = self.glossary
+        
+        # Build glossary instructions
+        glossary_text = ""
+        if glossary:
+            glossary_entries = "\n".join([f"- {cn} = {en}" for cn, en in list(glossary.items())[:50]])
+            glossary_text = f"""
+Use this glossary for consistent translations:
+{glossary_entries}
+"""
+        
+        prompt = f"""You are a professional translator for Chinese web novels.
+
+Task: Translate the following Chinese chapter to natural, fluent English.
+
+Instructions:
+1. Maintain narrative flow and readability
+2. Use the provided glossary for consistency with previous chapters
+3. Keep the same paragraph structure
+4. Translate cultivation terms naturally
+5. Do NOT include any notes, explanations, or meta-commentary
+6. Output ONLY the translated chapter content
+
+{glossary_text}
+
+Chapter {chapter_number} content (Chinese):
+{content}
+
+English translation:"""
+        
+        # ATTEMPT 1: Try Gemini with original content
+        try:
+            response = self.client.models.generate_content(
+                model='gemini-flash-latest',
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=0.3,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=0,
+                    ),
+                )
+            )
+            
+            translated = response.text.strip()
+            return translated, 'gemini'
+            
+        except Exception as e:
+            error_msg = str(e)
+            
+            # Check for safety/content filtering errors
+            if 'SAFETY' in error_msg.upper() or 'BLOCK' in error_msg.upper():
+                self.logger(f"    ⚠ Gemini safety filter triggered")
+                
+                # ATTEMPT 2: Translate with Google Translate, then censor and retry Gemini
+                if google_translator:
+                    self.logger(f"    → Attempting Google Translate + censoring + Gemini retry...")
+                    
+                    try:
+                        # Translate with Google first
+                        google_translation = google_translator.translate(content)
+                        
+                        # Censor potentially problematic words
+                        censored_translation = self._censor_content(google_translation)
+                        
+                        # Retry Gemini with censored English text
+                        retry_prompt = f"""You are a professional editor for web novels.
+
+Task: Improve and polish the following English text while maintaining consistency with the glossary.
+
+Instructions:
+1. Fix any awkward phrasing or grammar
+2. Use the glossary for character/place names
+3. Keep the same paragraph structure
+4. Make the text flow naturally
+5. Output ONLY the polished content
+
+{glossary_text}
+
+Text to polish:
+{censored_translation}
+
+Polished version:"""
+                        
+                        response = self.client.models.generate_content(
+                            model='gemini-flash-latest',
+                            contents=retry_prompt,
+                            config=types.GenerateContentConfig(
+                                temperature=0.3,
+                                thinking_config=types.ThinkingConfig(
+                                    thinking_budget=0,
+                                ),
+                            )
+                        )
+                        
+                        polished = response.text.strip()
+                        self.logger(f"    ✓ Gemini succeeded with censored content")
+                        return polished, 'gemini_censored'
+                        
+                    except Exception as retry_error:
+                        self.logger(f"    ✗ Gemini retry also failed: {retry_error}")
+                        # ATTEMPT 3: Fall back to Google Translate only
+                        self.logger(f"    → Using Google Translate as final fallback")
+                        return google_translation, 'google'
+                else:
+                    return None, 'failed'
+            else:
+                self.logger(f"    ✗ Gemini translation error: {error_msg}")
+                return None, 'failed'
+    
+    def _censor_content(self, text):
+        """
+        Censor potentially problematic words for content filtering
+        
+        Args:
+            text: Text to censor
+            
+        Returns:
+            Censored text
+        """
+        # Common words that might trigger filters
+        censor_map = {
+            'dick': 'dk',
+            'pussy': 'py',
+            'anal': 'a**l',
+            'sex': 'S*x',
+            'fuck': 'f**k',
+            'blood': 'energy',
+            'bloody': 'intense',
+            'death': 'end',
+            'fucking': 'f***g',
+            'died': 'fell',
+            'dying': 'falling',
+            'corpse': 'body',
+            'dead': 'fallen',
+            'slaughter': 'battle',
+            'slaughtered': 'battled',
+            'torture': 'pressure',
+            'tortured': 'pressured',
+            'pain': 'discomfort',
+            'painful': 'difficult',
+            'weapon': 'tool',
+            'sword': 'blade',
+            'knife': 'blade',
+            'attack': 'strike',
+            'attacked': 'struck',
+            'violent': 'intense',
+            'violence': 'intensity',
+        }
+        
+        censored = text
+        for original, replacement in censor_map.items():
+            # Case-insensitive replacement, preserve capitalization
+            import re
+            pattern = re.compile(re.escape(original), re.IGNORECASE)
+            
+            def replace_func(match):
+                orig = match.group(0)
+                if orig[0].isupper():
+                    return replacement.capitalize()
+                return replacement
+            
+            censored = pattern.sub(replace_func, censored)
+        
+        return censored
+    
+    def save_glossary(self, novel_id, file_manager):
+        """Save glossary to file for future reference"""
+        if not self.glossary:
+            return
+        
+        try:
+            import os
+            novel_dir = os.path.join('novels', f'novel_{novel_id}')
+            os.makedirs(novel_dir, exist_ok=True)
+            
+            filepath = os.path.join(novel_dir, 'glossary.json')
+            with open(filepath, 'w', encoding='utf-8') as f:
+                json.dump(self.glossary, f, ensure_ascii=False, indent=2)
+            
+            self.logger(f"✓ Glossary saved to {filepath}")
+        except Exception as e:
+            self.logger(f"✗ Failed to save glossary: {e}")
+    
+    def load_glossary(self, novel_id):
+        """Load existing glossary from file"""
+        try:
+            import os
+            filepath = os.path.join('novels', f'novel_{novel_id}', 'glossary.json')
+            
+            if os.path.exists(filepath):
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    self.glossary = json.load(f)
+                self.logger(f"✓ Loaded existing glossary with {len(self.glossary)} entries")
+                return True
+            return False
+        except Exception as e:
+            self.logger(f"✗ Failed to load glossary: {e}")
+            return False

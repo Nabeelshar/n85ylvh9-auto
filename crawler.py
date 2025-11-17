@@ -48,38 +48,14 @@ class NovelCrawler:
         if self.should_translate:
             if not self.translator or not self.translator.client:
                 self.log("CRITICAL ERROR: Translation Required But Unavailable")
-                self.log("Please check if googletrans==4.0.0rc1 is installed: pip install googletrans==4.0.0rc1")
+                self.log("Google Translate (googletrans) is required for this crawler")
+                self.log("It's used for title translation and as fallback when Gemini censors content")
                 self.log("")
-                self.log("Attempting to install googletrans automatically...")
-                import subprocess
-                try:
-                    subprocess.check_call([sys.executable, "-m", "pip", "install", "googletrans==4.0.0rc1"])
-                    self.log("✓ googletrans installed successfully")
-                    self.log("Reinitializing translator...")
-                    
-                    # Reinitialize translator after installation
-                    import importlib
-                    import translator as translator_module
-                    importlib.reload(translator_module)
-                    from translator import Translator as TranslatorClass
-                    
-                    import os
-                    if self.google_credentials_file:
-                        cred_file_path = os.path.join(os.path.dirname(__file__), self.google_credentials_file)
-                    else:
-                        cred_file_path = None
-                    
-                    self.translator = TranslatorClass(self.google_project_id, self.log, cred_file_path)
-                    
-                    if not self.translator or not self.translator.client:
-                        self.log("✗ Translator still unavailable after install")
-                        raise Exception("Translation service initialization failed")
-                    
-                    self.log("✓ Translator initialized successfully after install")
-                except subprocess.CalledProcessError as e:
-                    self.log(f"✗ Auto-install failed: {e}")
-                    self.log("Please install manually: pip install googletrans==4.0.0rc1")
-                    raise Exception("Translation service initialization failed")
+                self.log("The package is in requirements.txt but may not have initialized properly")
+                self.log("This could be a compatibility issue with Python 3.13")
+                self.log("")
+                self.log("Please check requirements.txt includes: googletrans==4.0.0rc1")
+                raise Exception("Translation service initialization failed")
         
         # Initialize Gemini translator (for descriptions and chapter content)
         self.gemini_translator = None

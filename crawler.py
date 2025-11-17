@@ -55,11 +55,25 @@ class NovelCrawler:
                 try:
                     subprocess.check_call([sys.executable, "-m", "pip", "install", "googletrans==4.0.0rc1"])
                     self.log("✓ googletrans installed successfully")
-                    self.log("Please run the crawler again")
-                except Exception as e:
+                    self.log("Reinitializing translator...")
+                    
+                    # Reinitialize translator after installation
+                    import importlib
+                    import translator
+                    importlib.reload(translator)
+                    from translator import Translator
+                    
+                    self.translator = Translator(self.google_project_id, self.log, cred_file if 'cred_file' in locals() else None)
+                    
+                    if not self.translator or not self.translator.client:
+                        self.log("✗ Translator still unavailable after install")
+                        raise Exception("Translation service initialization failed")
+                    
+                    self.log("✓ Translator initialized successfully after install")
+                except subprocess.CalledProcessError as e:
                     self.log(f"✗ Auto-install failed: {e}")
                     self.log("Please install manually: pip install googletrans==4.0.0rc1")
-                raise Exception("Translation service initialization failed")
+                    raise Exception("Translation service initialization failed")
         
         # Initialize Gemini translator (for descriptions and chapter content)
         self.gemini_translator = None

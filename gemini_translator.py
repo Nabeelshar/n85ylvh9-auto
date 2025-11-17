@@ -60,9 +60,6 @@ English translation:"""
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_budget=0,
-                        ),
                     )
                 )
                 
@@ -148,9 +145,6 @@ JSON glossary:"""
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2,
-                    thinking_config=types.ThinkingConfig(
-                        thinking_budget=0,
-                    ),
                 )
             )
             
@@ -255,9 +249,6 @@ English translation:"""
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
-                        thinking_config=types.ThinkingConfig(
-                            thinking_budget=0,
-                        ),
                     )
                 )
                 
@@ -324,9 +315,6 @@ Polished version:"""
                             contents=retry_prompt,
                             config=types.GenerateContentConfig(
                                 temperature=0.3,
-                                thinking_config=types.ThinkingConfig(
-                                    thinking_budget=0,
-                                ),
                             )
                         )
                         

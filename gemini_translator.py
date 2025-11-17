@@ -56,10 +56,13 @@ English translation:"""
         for attempt in range(max_retries):
             try:
                 response = self.client.models.generate_content(
-                    model='gemini-2.0-flash-exp',
+                    model='models/gemini-flash-latest',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_budget=0,
+                        ),
                     )
                 )
                 
@@ -105,25 +108,28 @@ English translation:"""
         self.logger(f"\n{'='*50}")
         self.logger("Generating Translation Glossary")
         self.logger(f"{'='*50}")
-        self.logger(f"Analyzing all {len(chapters_data)} chapters...")
+        self.logger(f"Analyzing all {len(chapters_data)} chapters (complete raw content)...")
         
-        # Combine all chapters for context
-        sample_chapters = chapters_data
+        # Combine ALL chapters with COMPLETE content (no truncation)
         combined_text = "\n\n".join([
-            f"Chapter {i+1}:\n{ch['content'][:3000]}"  # Limit each chapter to 3000 chars
-            for i, ch in enumerate(sample_chapters)
+            f"Chapter {i+1}:\n{ch['content']}"  # Use complete chapter content
+            for i, ch in enumerate(chapters_data)
         ])
+        
+        # Gemini has 1 million token input limit - no artificial limits needed
+        self.logger(f"  Using complete content ({len(combined_text)} chars, ~{len(combined_text)//4} tokens)")
         
         prompt = f"""You are a professional translator for Chinese web novels.
 
 Task: Analyze the following Chinese novel chapters and create a consistent English glossary for character names, place names, special terms, and cultivation/skill terms.
 
 Instructions:
-1. Extract all important names (characters, places, organizations)
-2. Extract cultivation terms, skill names, and special terminology
+1. Extract ALL important names (characters, places, organizations) that appear in the text
+2. Extract ALL cultivation terms, skill names, and special terminology
 3. Provide consistent English translations that sound natural
 4. For names, use pinyin or appropriate English equivalents
-5. Return ONLY a JSON object in this exact format:
+5. Be thorough - extract as many terms as possible for consistency
+6. Return ONLY a JSON object in this exact format:
 
 {{
   "characters": {{"中文名": "English Name", ...}},
@@ -132,13 +138,13 @@ Instructions:
 }}
 
 Chinese chapters:
-{combined_text[:15000]}
+{combined_text}
 
 JSON glossary:"""
         
         try:
             response = self.client.models.generate_content(
-                model='gemini-flash-latest',
+                model='gemini-2.5-flash',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2,
@@ -245,7 +251,7 @@ English translation:"""
         for attempt in range(max_retries):
             try:
                 response = self.client.models.generate_content(
-                    model='gemini-flash-latest',
+                    model='models/gemini-flash-latest',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
@@ -314,7 +320,7 @@ Text to polish:
 Polished version:"""
                         
                         response = self.client.models.generate_content(
-                            model='gemini-flash-latest',
+                            model='models/gemini-flash-latest',
                             contents=retry_prompt,
                             config=types.GenerateContentConfig(
                                 temperature=0.3,

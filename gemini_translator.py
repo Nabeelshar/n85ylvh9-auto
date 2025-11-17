@@ -138,10 +138,13 @@ JSON glossary:"""
         
         try:
             response = self.client.models.generate_content(
-                model='gemini-2.0-flash-exp',
+                model='gemini-flash-latest',
                 contents=prompt,
                 config=types.GenerateContentConfig(
                     temperature=0.2,
+                    thinking_config=types.ThinkingConfig(
+                        thinking_budget=0,
+                    ),
                 )
             )
             
@@ -238,13 +241,17 @@ English translation:"""
         
         # ATTEMPT 1: Try Gemini with original content (with retries for API errors)
         max_retries = 3
+        last_error = None
         for attempt in range(max_retries):
             try:
                 response = self.client.models.generate_content(
-                    model='gemini-2.0-flash-exp',
+                    model='gemini-flash-latest',
                     contents=prompt,
                     config=types.GenerateContentConfig(
                         temperature=0.3,
+                        thinking_config=types.ThinkingConfig(
+                            thinking_budget=0,
+                        ),
                     )
                 )
                 
@@ -252,6 +259,7 @@ English translation:"""
                 return translated, 'gemini'
                 
             except Exception as e:
+                last_error = e
                 error_msg = str(e)
                 
                 # Check for safety/content filtering errors - DON'T RETRY, go to fallback
@@ -270,8 +278,9 @@ English translation:"""
                     return None, 'failed'
         
         # Only reach here if safety filter triggered
-        error_msg = str(e)
-        if 'SAFETY' in error_msg.upper() or 'BLOCK' in error_msg.upper() or 'HARM' in error_msg.upper():
+        if last_error:
+            error_msg = str(last_error)
+            if 'SAFETY' in error_msg.upper() or 'BLOCK' in error_msg.upper() or 'HARM' in error_msg.upper():
                 self.logger(f"    ⚠ Gemini safety filter triggered")
                 
                 # ATTEMPT 2: Translate with Google Translate, then censor and retry Gemini
@@ -305,10 +314,13 @@ Text to polish:
 Polished version:"""
                         
                         response = self.client.models.generate_content(
-                            model='gemini-2.0-flash-exp',
+                            model='gemini-flash-latest',
                             contents=retry_prompt,
                             config=types.GenerateContentConfig(
                                 temperature=0.3,
+                                thinking_config=types.ThinkingConfig(
+                                    thinking_budget=0,
+                                ),
                             )
                         )
                         
@@ -323,9 +335,9 @@ Polished version:"""
                         return google_translation, 'google'
                 else:
                     return None, 'failed'
-            else:
-                self.logger(f"    ✗ Gemini translation error: {error_msg}")
-                return None, 'failed'
+        else:
+            # No error or non-safety error after retries
+            return None, 'failed'
     
     def _censor_content(self, text):
         """

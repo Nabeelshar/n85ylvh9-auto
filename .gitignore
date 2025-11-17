@@ -25,7 +25,7 @@ wheels/
 
 # Configuration
 config.json
-crawler_state.json
+# crawler_state.json - Allow this for GitHub Actions to track progress
 
 # Downloaded content
 novels/
